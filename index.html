@@ -1,0 +1,499 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Detector de Billetes MX - Teachable Machine</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- TensorFlow.js y Teachable Machine -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest/dist/tf.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@teachablemachine/image@latest/dist/teachablemachine-image.min.js"></script>
+    <style>
+        * { -webkit-tap-highlight-color: transparent; }
+        body {
+            background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+            min-height: 100vh;
+        }
+        .glass {
+            background: rgba(30, 41, 59, 0.8);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(99, 102, 241, 0.2);
+        }
+        .resultado-flash {
+            animation: flash-in 0.3s ease-out;
+        }
+        @keyframes flash-in {
+            0% { transform: scale(0.9); opacity: 0; }
+            100% { transform: scale(1); opacity: 1; }
+        }
+        .barra-confianza {
+            transition: width 0.2s ease-out;
+        }
+        .pulse-success {
+            animation: pulse 0.5s ease-out;
+        }
+        @keyframes pulse {
+            0%, 100% { box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.7); }
+            50% { box-shadow: 0 0 0 15px rgba(34, 197, 94, 0); }
+        }
+    </style>
+</head>
+<body class="text-white">
+    
+    <div class="container mx-auto px-4 py-4 max-w-lg">
+        
+        <!-- Header -->
+        <header class="text-center mb-4">
+            <h1 class="text-2xl font-bold bg-gradient-to-r from-cyan-400 to-emerald-400 bg-clip-text text-transparent">
+                💵 Detector de Billetes MX
+            </h1>
+            <p class="text-slate-400 text-sm">Con Inteligencia Artificial</p>
+        </header>
+        
+        <!-- Configuración del modelo -->
+        <div class="glass rounded-xl p-4 mb-4" id="config-panel">
+            <h2 class="text-sm font-bold text-slate-400 mb-3">⚙️ Configuración del Modelo</h2>
+            <div class="space-y-3">
+                <div>
+                    <label class="text-xs text-slate-500">URL del modelo de Teachable Machine:</label>
+                    <input type="text" id="model-url" 
+                           value="https://teachablemachine.withgoogle.com/models/7Ak91wCf7/"
+                           class="w-full mt-1 px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-sm text-white placeholder-slate-500 focus:border-cyan-500 focus:outline-none">
+                </div>
+                <button onclick="cargarModelo()" id="btn-cargar"
+                        class="w-full py-3 bg-cyan-600 hover:bg-cyan-500 rounded-lg font-bold transition-all">
+                    🚀 Cargar Modelo
+                </button>
+                <p class="text-xs text-slate-500 text-center">
+                    ¿No tienes modelo? <a href="https://teachablemachine.withgoogle.com" target="_blank" class="text-cyan-400 underline">Créalo aquí</a>
+                </p>
+            </div>
+        </div>
+        
+        <!-- Video y detección (oculto hasta cargar modelo) -->
+        <div id="detector-panel" class="hidden">
+            
+            <!-- Video -->
+            <div class="glass rounded-xl p-3 mb-4">
+                <div class="relative">
+                    <video id="video" autoplay playsinline class="w-full rounded-lg bg-black"></video>
+                    
+                    <!-- Estado -->
+                    <div class="absolute top-2 left-2 flex items-center gap-2 px-3 py-1 rounded-full bg-black/70">
+                        <div id="estado-dot" class="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
+                        <span id="estado-text" class="text-xs">Detectando...</span>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Resultado Principal -->
+            <div class="glass rounded-xl p-6 mb-4" id="panel-resultado">
+                <div id="resultado-contenido" class="text-center">
+                    <div class="text-5xl mb-3">💵</div>
+                    <p class="text-slate-400">Apunta a un billete...</p>
+                </div>
+            </div>
+            
+            <!-- Barras de confianza -->
+            <div class="glass rounded-xl p-4 mb-4">
+                <h3 class="text-sm font-bold text-slate-400 mb-3">📊 Probabilidades</h3>
+                <div id="barras-container" class="space-y-2">
+                    <!-- Las barras se generan dinámicamente -->
+                </div>
+            </div>
+            
+            <!-- Historial y Total -->
+            <div class="grid grid-cols-2 gap-3">
+                <div class="glass rounded-xl p-4">
+                    <h3 class="text-xs font-bold text-slate-400 mb-2">Historial</h3>
+                    <div id="historial" class="space-y-1 max-h-24 overflow-y-auto text-sm">
+                        <p class="text-slate-600 text-xs">Sin detecciones</p>
+                    </div>
+                </div>
+                <div class="glass rounded-xl p-4">
+                    <h3 class="text-xs font-bold text-slate-400 mb-2">Total</h3>
+                    <div class="text-2xl font-bold text-emerald-400" id="total">$0</div>
+                    <button onclick="resetTotal()" class="text-xs text-slate-500 hover:text-slate-400 mt-1">🔄 Reset</button>
+                </div>
+            </div>
+            
+            <!-- Controles -->
+            <div class="flex gap-3 mt-4">
+                <button onclick="toggleAudio()" id="btn-audio"
+                        class="flex-1 py-3 bg-emerald-600 hover:bg-emerald-500 rounded-xl font-bold">
+                    🔊 Audio ON
+                </button>
+                <button onclick="toggleDeteccion()" id="btn-detectar"
+                        class="flex-1 py-3 bg-amber-600 hover:bg-amber-500 rounded-xl font-bold">
+                    ⏸️ Pausar
+                </button>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+    // ============================================
+    // CONFIGURACIÓN
+    // ============================================
+    const CONFIG = {
+        // Umbral de confianza para aceptar detección
+        umbralConfianza: 0.80,  // 80%
+        
+        // Confirmaciones requeridas (seguridad)
+        confirmacionesRequeridas: 3,
+        tiempoMaxConfirmacion: 2000,  // ms
+        
+        // Cooldown después de detectar
+        cooldownDeteccion: 2500,  // ms
+        
+        // Colores por denominación
+        coloresBilletes: {
+            20: { color: '#3b82f6', nombre: 'veinte' },
+            50: { color: '#ec4899', nombre: 'cincuenta' },
+            100: { color: '#f97316', nombre: 'cien' },
+            200: { color: '#22c55e', nombre: 'doscientos' },
+            500: { color: '#06b6d4', nombre: 'quinientos' },
+            1000: { color: '#a855f7', nombre: 'mil' }
+        }
+    };
+    
+    // Mapeo de clases del modelo a valores
+    let clasesModelo = {};  // Se llena al cargar el modelo
+    
+    // ============================================
+    // ESTADO
+    // ============================================
+    let model = null;
+    let video = null;
+    let detectando = true;
+    let audioHabilitado = true;
+    let ultimaDeteccion = 0;
+    let confirmaciones = [];
+    let historial = [];
+    let totalAcumulado = 0;
+    
+    // ============================================
+    // CARGAR MODELO
+    // ============================================
+    async function cargarModelo() {
+        const urlInput = document.getElementById('model-url').value.trim();
+        
+        if (!urlInput) {
+            alert('Por favor ingresa la URL del modelo');
+            return;
+        }
+        
+        // Asegurar que termine con /
+        const modelURL = urlInput.endsWith('/') ? urlInput : urlInput + '/';
+        
+        const btn = document.getElementById('btn-cargar');
+        btn.disabled = true;
+        btn.textContent = '⏳ Cargando...';
+        
+        try {
+            // Cargar modelo de Teachable Machine
+            model = await tmImage.load(
+                modelURL + 'model.json',
+                modelURL + 'metadata.json'
+            );
+            
+            const labels = model.getClassLabels();
+            console.log('Modelo cargado. Clases:', labels);
+            
+            // Detectar automáticamente qué valor tiene cada clase
+            clasesModelo = {};
+            for (const label of labels) {
+                const valor = extraerValorDeClase(label);
+                clasesModelo[label] = valor;
+                console.log(`  ${label} → $${valor}`);
+            }
+            
+            // Mostrar panel de detección
+            document.getElementById('config-panel').classList.add('hidden');
+            document.getElementById('detector-panel').classList.remove('hidden');
+            
+            // Crear barras de confianza
+            crearBarrasConfianza(labels);
+            
+            // Iniciar cámara
+            await iniciarCamara();
+            
+            // Iniciar loop de detección
+            detectar();
+            
+            hablar('Modelo cargado. Apunta a un billete.');
+            
+        } catch (error) {
+            console.error('Error cargando modelo:', error);
+            alert('Error al cargar el modelo:\n' + error.message + '\n\nVerifica que la URL sea correcta.');
+            btn.disabled = false;
+            btn.textContent = '🚀 Cargar Modelo';
+        }
+    }
+    
+    // Extraer valor numérico del nombre de la clase
+    function extraerValorDeClase(nombreClase) {
+        // Buscar número en el nombre de la clase
+        // Funciona con: "billete_500", "500", "500 pesos", "Class 500", etc.
+        const match = nombreClase.match(/(\d+)/);
+        if (match) {
+            const num = parseInt(match[1]);
+            // Verificar que sea una denominación válida
+            if ([20, 50, 100, 200, 500, 1000].includes(num)) {
+                return num;
+            }
+        }
+        // Si no tiene número o no es válido, es "no billete"
+        return 0;
+    }
+    
+    function crearBarrasConfianza(labels) {
+        const container = document.getElementById('barras-container');
+        container.innerHTML = labels.map(label => {
+            const valor = clasesModelo[label] || 0;
+            const colorInfo = CONFIG.coloresBilletes[valor] || { color: '#64748b' };
+            const displayName = valor > 0 ? `$${valor}` : 'Nada';
+            return `
+                <div class="flex items-center gap-2">
+                    <span class="text-xs w-12 text-right">${displayName}</span>
+                    <div class="flex-1 bg-slate-700 rounded-full h-3">
+                        <div id="barra-${label.replace(/\s+/g, '_')}" class="barra-confianza h-3 rounded-full" 
+                             style="width: 0%; background-color: ${colorInfo.color}"></div>
+                    </div>
+                    <span id="pct-${label.replace(/\s+/g, '_')}" class="text-xs w-10 text-slate-400">0%</span>
+                </div>
+            `;
+        }).join('');
+    }
+    
+    // ============================================
+    // CÁMARA
+    // ============================================
+    async function iniciarCamara() {
+        try {
+            // Verificar HTTPS
+            const isSecure = location.protocol === 'https:' || 
+                            location.hostname === 'localhost' || 
+                            location.hostname === '127.0.0.1' ||
+                            location.protocol === 'file:';
+            
+            if (!isSecure) {
+                alert('⚠️ Necesitas HTTPS para la cámara.\n\nAbre el archivo directamente en el celular o usa localhost.');
+                return;
+            }
+            
+            video = document.getElementById('video');
+            
+            const stream = await navigator.mediaDevices.getUserMedia({
+                video: { 
+                    width: { ideal: 640 }, 
+                    height: { ideal: 480 }, 
+                    facingMode: { ideal: 'environment' }
+                }
+            });
+            
+            video.srcObject = stream;
+            await video.play();
+            
+        } catch (error) {
+            alert('Error cámara: ' + error.message);
+        }
+    }
+    
+    // ============================================
+    // DETECCIÓN
+    // ============================================
+    async function detectar() {
+        if (!model || !video || !detectando) {
+            requestAnimationFrame(detectar);
+            return;
+        }
+        
+        try {
+            // Predecir
+            const predictions = await model.predict(video);
+            
+            // Actualizar barras
+            actualizarBarras(predictions);
+            
+            // Encontrar mejor predicción
+            let mejor = predictions.reduce((a, b) => 
+                a.probability > b.probability ? a : b
+            );
+            
+            // Obtener el valor del billete de esta clase
+            const valorBillete = clasesModelo[mejor.className] || 0;
+            
+            // Verificar si es un billete con suficiente confianza
+            const now = Date.now();
+            const enCooldown = (now - ultimaDeteccion) < CONFIG.cooldownDeteccion;
+            
+            if (!enCooldown && 
+                valorBillete > 0 &&  // Es un billete (no "no_billete" o similar)
+                mejor.probability >= CONFIG.umbralConfianza) {
+                
+                // Agregar confirmación
+                agregarConfirmacion(mejor.className, valorBillete, mejor.probability);
+            }
+            
+        } catch (error) {
+            console.error('Error detectando:', error);
+        }
+        
+        requestAnimationFrame(detectar);
+    }
+    
+    function actualizarBarras(predictions) {
+        for (const pred of predictions) {
+            const safeId = pred.className.replace(/\s+/g, '_');
+            const barra = document.getElementById('barra-' + safeId);
+            const pct = document.getElementById('pct-' + safeId);
+            if (barra && pct) {
+                const porcentaje = Math.round(pred.probability * 100);
+                barra.style.width = porcentaje + '%';
+                pct.textContent = porcentaje + '%';
+            }
+        }
+    }
+    
+    // ============================================
+    // SISTEMA DE CONFIRMACIONES
+    // ============================================
+    function agregarConfirmacion(clase, valor, confianza) {
+        const ahora = Date.now();
+        
+        // Limpiar confirmaciones viejas o de otro valor
+        confirmaciones = confirmaciones.filter(c => 
+            ahora - c.timestamp < CONFIG.tiempoMaxConfirmacion &&
+            c.valor === valor
+        );
+        
+        // Agregar nueva
+        confirmaciones.push({ clase, valor, confianza, timestamp: ahora });
+        
+        // Verificar si tenemos suficientes
+        if (confirmaciones.length >= CONFIG.confirmacionesRequeridas) {
+            // ¡Confirmado!
+            confirmarDeteccion(valor);
+            confirmaciones = [];
+        } else {
+            // Mostrar progreso
+            mostrarParcial(valor, confirmaciones.length);
+        }
+    }
+    
+    function confirmarDeteccion(valor) {
+        if (!valor || valor === 0) return;
+        
+        const colorInfo = CONFIG.coloresBilletes[valor] || { color: '#06b6d4', nombre: 'pesos' };
+        
+        ultimaDeteccion = Date.now();
+        
+        // Feedback
+        vibrar([100, 50, 100]);
+        hablar(`Billete de ${colorInfo.nombre} pesos`);
+        
+        // Visual
+        const panel = document.getElementById('panel-resultado');
+        panel.classList.add('pulse-success');
+        setTimeout(() => panel.classList.remove('pulse-success'), 500);
+        
+        document.getElementById('resultado-contenido').innerHTML = `
+            <div class="resultado-flash">
+                <div class="text-5xl font-bold mb-2" style="color: ${colorInfo.color}">
+                    $${valor}
+                </div>
+                <p class="text-green-400 font-bold text-lg">✓ CONFIRMADO</p>
+            </div>
+        `;
+        
+        // Actualizar estado
+        document.getElementById('estado-text').textContent = 'Espera...';
+        setTimeout(() => {
+            document.getElementById('estado-text').textContent = 'Detectando...';
+            document.getElementById('resultado-contenido').innerHTML = `
+                <div class="text-5xl mb-3">💵</div>
+                <p class="text-slate-400">Apunta a un billete...</p>
+            `;
+        }, CONFIG.cooldownDeteccion);
+        
+        // Historial y total
+        agregarHistorial(valor);
+        totalAcumulado += valor;
+        document.getElementById('total').textContent = '$' + totalAcumulado.toLocaleString();
+    }
+    
+    function mostrarParcial(valor, cuenta) {
+        const colorInfo = CONFIG.coloresBilletes[valor] || { color: '#06b6d4' };
+        
+        document.getElementById('resultado-contenido').innerHTML = `
+            <div class="text-4xl font-bold mb-2 opacity-70" style="color: ${colorInfo.color}">
+                $${valor}?
+            </div>
+            <p class="text-amber-400">⏳ Verificando... (${cuenta}/${CONFIG.confirmacionesRequeridas})</p>
+        `;
+    }
+    
+    // ============================================
+    // AUDIO
+    // ============================================
+    function hablar(texto) {
+        if (!audioHabilitado) return;
+        speechSynthesis.cancel();
+        const utterance = new SpeechSynthesisUtterance(texto);
+        utterance.lang = 'es-MX';
+        utterance.rate = 1.0;
+        speechSynthesis.speak(utterance);
+    }
+    
+    function vibrar(patron = [100]) {
+        if (navigator.vibrate) navigator.vibrate(patron);
+    }
+    
+    function toggleAudio() {
+        audioHabilitado = !audioHabilitado;
+        const btn = document.getElementById('btn-audio');
+        btn.textContent = audioHabilitado ? '🔊 Audio ON' : '🔇 Audio OFF';
+        btn.className = audioHabilitado 
+            ? 'flex-1 py-3 bg-emerald-600 hover:bg-emerald-500 rounded-xl font-bold'
+            : 'flex-1 py-3 bg-slate-600 hover:bg-slate-500 rounded-xl font-bold';
+    }
+    
+    function toggleDeteccion() {
+        detectando = !detectando;
+        const btn = document.getElementById('btn-detectar');
+        btn.textContent = detectando ? '⏸️ Pausar' : '▶️ Continuar';
+        document.getElementById('estado-text').textContent = detectando ? 'Detectando...' : 'Pausado';
+        document.getElementById('estado-dot').classList.toggle('animate-pulse', detectando);
+    }
+    
+    // ============================================
+    // HISTORIAL
+    // ============================================
+    function agregarHistorial(valor) {
+        const hora = new Date().toLocaleTimeString('es-MX', { 
+            hour: '2-digit', minute: '2-digit' 
+        });
+        
+        historial.unshift({ valor, hora });
+        if (historial.length > 5) historial.pop();
+        
+        document.getElementById('historial').innerHTML = historial.map(item => `
+            <div class="flex justify-between text-xs">
+                <span class="text-emerald-400 font-bold">$${item.valor}</span>
+                <span class="text-slate-500">${item.hora}</span>
+            </div>
+        `).join('');
+    }
+    
+    function resetTotal() {
+        totalAcumulado = 0;
+        historial = [];
+        document.getElementById('total').textContent = '$0';
+        document.getElementById('historial').innerHTML = '<p class="text-slate-600 text-xs">Sin detecciones</p>';
+        hablar('Historial limpiado');
+    }
+    </script>
+    
+</body>
+</html>
